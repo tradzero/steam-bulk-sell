@@ -7,7 +7,7 @@ const wallet={currency:23,code:'CNY',symbol:'¥',minimum:1,increment:1,steamRate
 const account='76561198000000000';
 function fixture() {
   const dom=new JSDOM('<main><input id="agreement" type="checkbox"><button id="submit">创建上架物品</button>'+[101,102].map(id=>`<div><input class="market_multi_quantity" id="sell_${id}_qty" value="1"><input id="sell_${id}_price_recv"><input id="sell_${id}_price_paid"></div>`).join('')+'</main>',{url:'https://steamcommunity.com/market/multisell?appid=730&contextid=2',runScripts:'outside-only'});
-  const w=dom.window; let submissions=0;
+  const w=dom.window; Object.defineProperty(w.document,'readyState',{value:'complete',configurable:true}); let submissions=0;
   w.document.getElementById('submit').addEventListener('click',()=>submissions++);
   w.fetch=()=>{submissions++;throw new Error('forbidden network');};
   w.g_steamID=account; w.g_unAppId=730; w.g_ulContextId='2'; w.g_bSellInProgress=false;
@@ -37,11 +37,11 @@ for (const [name, mutate] of [
   ['same-name skin appeared',f=>{f.inv.m_rgDescriptions[11].commodity=0;}],
   ['fees changed',f=>{f.w.g_rgWalletInfo.wallet_fee_percent=.08;}],
   ['currency changed',f=>{f.w.g_rgWalletInfo.wallet_currency=1;}],
-  ['native rounding changed mid-fill',f=>{const original=f.w.PriceRecvChanged;f.w.PriceRecvChanged=e=>{original(e);if(e.id.includes('102'))f.w.document.getElementById('sell_102_price_paid').value='¥ 99.99';};}],
+  ['native formatting changed mid-fill',f=>{const original=f.w.v_currencyformat;f.w.v_currencyformat=n=>n===115?'¥ 99.99':original(n);} ],
   ['native validation failed',f=>{f.w.UpdateOrderTotal=()=>false;}]
-]) test(`safe failure when ${name}`,()=>{const f=fixture();mutate(f);assert.throws(f.call);assert.deepEqual(f.quantities(),['0','0']);assert.equal(f.submissions(),0);f.close();});
+]) test(`safe failure when ${name}`,()=>{const f=fixture();mutate(f);assert.equal(f.call().state,'error');assert.deepEqual(f.quantities(),['0','0']);assert.equal(f.submissions(),0);f.close();});
 test('wrong account, expired review, active sale and unknown table all stop',()=>{
-  for (const mutate of [f=>{f.w.g_steamID='76561198000000001';},f=>{f.review.createdAt-=121000;},f=>{f.w.g_bSellInProgress=true;},f=>{f.w.document.getElementById('sell_102_qty').remove();}]) {const f=fixture();mutate(f);assert.throws(f.call);assert.equal(f.submissions(),0);f.close();}
+  for (const mutate of [f=>{f.w.g_steamID='76561198000000001';},f=>{f.review.createdAt-=121000;},f=>{f.w.g_bSellInProgress=true;},f=>{f.w.document.getElementById('sell_102_qty').remove();}]) {const f=fixture();mutate(f);assert.equal(f.call().state,'error');assert.equal(f.submissions(),0);f.close();}
 });
 test('self-contained bootstrap extracts only allowlisted wallet data',()=>{
   const f=fixture();f.w.history.replaceState(null,'','/id/test/inventory/');
@@ -62,4 +62,23 @@ test('reference fetch encodes names and reports 429 without retry',async()=>{
   const f=fixture();f.w.history.replaceState(null,'','/id/test/inventory/');f.w.AbortSignal=AbortSignal;let calls=0;
   f.w.fetch=async(u,o)=>{calls++;assert.equal(new URL(u).searchParams.get('market_hash_name'),'Case & +');assert.equal(o.method,'GET');return {ok:false,status:429};};
   await assert.rejects(f.w.eval(`(${fetchReference.toString()})`)('730',23,'Case & +'),/429/);assert.equal(calls,1);f.close();
+});
+
+test('native errors return serializable details instead of a thrown injection exception',()=>{
+ const f=fixture();f.w.GetTotalWithFees=()=>{throw new Error('fee engine unavailable');};
+ const result=JSON.parse(JSON.stringify(f.call()));assert.equal(result.state,'error');assert.match(result.message,/校验价格与库存.*fee engine unavailable/);assert.deepEqual(f.quantities(),['0','0']);f.close();
+});
+test('native fill does not require the unrelated asset lookup in PriceRecvChanged',()=>{
+ const f=fixture();f.w.PriceRecvChanged=()=>{throw new Error('missing native row asset metadata');};delete f.w.$J;
+ assert.equal(f.call().state,'filled');assert.equal(f.w.document.getElementById('sell_101_price_paid').value,'¥ 11.44');assert.equal(f.submissions(),0);f.close();
+});
+test('native initialization and owned-count callback are awaited before filling',()=>{
+ const f=fixture();Object.defineProperty(f.w.document,'readyState',{value:'loading',configurable:true});assert.equal(f.call().state,'loading');
+ Object.defineProperty(f.w.document,'readyState',{value:'complete',configurable:true});
+ const owned=f.w.document.createElement('span');owned.id='sell_101_qty_owned';f.w.document.body.append(owned);
+ assert.equal(f.call().state,'loading');assert.deepEqual(f.quantities(),['0','0']);owned.textContent='4';assert.equal(f.call().state,'filled');f.close();
+});
+test('cleanup preserves the original error even if native totals also throw',()=>{
+ const f=fixture();f.w.GetTotalWithFees=()=>{throw new Error('original failure');};f.w.UpdateOrderTotal=()=>{throw new Error('cleanup failure');};
+ const result=f.call();assert.equal(result.state,'error');assert.match(result.message,/original failure/);assert.deepEqual(f.quantities(),['0','0']);f.close();
 });

@@ -189,12 +189,20 @@ function nativeDone() {
   text('handoff-title', '清单已交接'); text('handoff-message', '数量和价格已填入 Steam 原生页面。交接完成时尚未提交；后续请在 Steam 核对和操作。'); show('check-native', false); status('原生页面已就绪。工作台不会自动提交，也不会替你进行手机确认。');
 }
 async function pollNative() {
+  try {
   for (let attempt = 0; attempt < 45; attempt++) {
-    const result = await request<{state: string; message: string}>('native'); text('handoff-message', result.message);
+    const result = await request<{state: string; message: string}>('native');
+    if (result && typeof result.message === 'string') text('handoff-message', result.message);
+    assert(result && ['loading', 'filled'].includes(result.state) && typeof result.message === 'string', 'Steam 原生填表未返回有效状态，请返回库存重新核对');
     if (result.state === 'filled') { nativeDone(); return; }
     await delay(1000);
   }
   status('Steam 库存仍未就绪，可以在核对单有效期内继续检查。'); show('check-native');
+  } catch (e) {
+    text('handoff-title', '原生交接未完成');
+    text('handoff-message', '未确认数量和价格填写成功。请查看上方具体原因；需要重新核对时，回到自己的 Steam 库存页再点击扩展。');
+    show('check-native'); throw e;
+  }
 }
 
 button('retry').addEventListener('click', () => void task(boot));

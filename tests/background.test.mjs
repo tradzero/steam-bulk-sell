@@ -15,7 +15,7 @@ globalThis.chrome={
     else if(options.func.name==='inspectAccount')result=ctx.account===account;
     else if(options.func.name==='fetchInventoryPage')result={total:2,more:false,cursor:'',records:[1,2].map(i=>({assetid:String(i),amount:1,hashName:'Case',name:'箱',type:'武器箱',icon:'',marketable:true,commodity:true}))};
     else if(options.func.name==='fetchReference'){if(ctx.rateLimit)throw new Error('429');result='¥ 1.15';}
-    else if(options.func.name==='fillNative')result={state:'filled',message:'filled'};
+    else if(options.func.name==='fillNative')result=Object.hasOwn(ctx,'nativeResult')?ctx.nativeResult:{state:'filled',message:'filled'};
     else throw new Error('unexpected executable');
     return [{frameId:0,result}];
   }}
@@ -81,4 +81,12 @@ test('reference expiration between review and handoff requires a new review',asy
   ctx.store[`session:${id}`].review.rows[0].reference.fetchedAt-=301000;
   const reply=await message(id,'handoff',{reviewId:r.data.id,acknowledged:true,riskAcknowledged:true});
   assert.equal(reply.ok,false);assert.match(reply.error,/参考价/);assert.equal(ctx.updates.length,0);
+});
+
+test('null, malformed and error injection results never mark a handoff filled',async()=>{
+ for(const result of [null,undefined,{}, {state:'unknown',message:'bad'}, {state:'error',message:'原生交接失败（填写原生价格）：test'}]){
+ const id=await ready();const r=await message(id,'review',{rows:selection});await message(id,'handoff',{reviewId:r.data.id,acknowledged:true,riskAcknowledged:true});ctx.nativeResult=result;
+ const reply=await message(id,'native');assert.equal(reply.ok,false);assert.doesNotMatch(reply.error,/Cannot read/);assert.equal(ctx.store[`session:${id}`].handoff.filled,false);
+ if(result?.state==='error')assert.match(reply.error,/填写原生价格/);
+ }
 });

@@ -17,7 +17,7 @@
         <div class="selection-bar"><button id="select-page">选择当前页</button><button id="select-all">选择全部筛选结果</button><button id="deselect">清空选择</button><label class="keep-label">每种保留<input id="keep" type="number" value="1" min="0" max="1000000" aria-label="每种保留数量">件</label><button id="keep-apply">应用到筛选结果</button><span id="hidden-selection" class="muted"></span></div>
         <div class="pricing"><div><strong>批量定价</strong><p>参考价是市场最低在售价；买方支付价与其口径一致。</p></div><button id="get-prices">获取已选参考价</button><label class="sr-only" for="strategy">定价策略</label><select id="strategy"><option value="match">与参考最低在售价一致</option><option value="undercut">低于参考价一个货币步长</option><option value="percent">按参考价调整百分比</option></select><label id="offset-label" hidden><input id="offset" type="number" value="0" min="-50" max="100" step="1" aria-label="参考价调整百分比">%</label><button id="apply-prices">应用到已选</button><span id="price-progress" class="muted"></span></div>
         <div class="price-mode-bar"><label>价格输入口径<select id="price-mode"><option value="receive">到手价</option><option value="paid">买方支付价（参考价口径）</option></select></label><p id="price-mode-hint">输入每件到手价，自动计算买方支付和手续费。</p></div>
-        <div class="table-scroll"><table id="inventory-table"><thead><tr><th>选择</th><th>物品</th><th>持有 / 出售数量</th><th>参考买方价</th><th id="price-heading">到手价 / 件（输入）</th><th id="converted-heading">买方支付 / 件</th><th>手续费 / 件</th><th>到手小计</th></tr></thead><tbody id="items"></tbody></table></div>
+        <div class="table-scroll"><table id="inventory-table"><colgroup><col class="col-check"><col class="col-item"><col class="col-quantity"><col class="col-reference"><col class="col-price"><col class="col-converted"><col class="col-fee"><col class="col-subtotal"></colgroup><thead><tr><th>选择</th><th>物品</th><th>持有 / 出售数量</th><th>参考买方价</th><th id="price-heading">到手价 / 件（输入）</th><th id="converted-heading">买方支付 / 件</th><th>手续费 / 件</th><th>到手小计</th></tr></thead><tbody id="items"></tbody></table></div>
         <div id="empty" class="empty" hidden>没有符合筛选条件的同质物品。</div>
         <div class="pagination"><button id="previous">上一页</button><span id="page-info"></span><button id="next">下一页</button></div>
         <div class="checkout"><div><p id="selection-summary">未选择物品</p><div class="total" id="total">—</div><p id="total-caption">全部成交后的预计到手金额</p></div><div class="checkout-actions"><button id="save">保存草稿</button><button id="review" class="primary">核对出售清单 →</button></div></div>
@@ -25,13 +25,13 @@
     </section>
     <section id="review-panel" hidden aria-label="核对出售清单">
       <div class="section-head"><div><h2>确认这批物品与价格</h2><p id="review-context"></p></div><button id="back">返回调整</button></div>
-      <div class="table-scroll"><table><thead><tr><th>物品</th><th>数量</th><th>您将收到 / 件</th><th>买方支付 / 件</th><th>手续费 / 件</th><th>到手小计</th><th>核对提示</th></tr></thead><tbody id="review-items"></tbody></table></div>
+      <div class="table-scroll"><table id="review-table"><colgroup><col class="col-item"><col class="col-quantity"><col class="col-price"><col class="col-converted"><col class="col-fee"><col class="col-subtotal"><col class="col-warning"></colgroup><thead><tr><th>物品</th><th>数量</th><th>您将收到 / 件</th><th>买方支付 / 件</th><th>手续费 / 件</th><th>到手小计</th><th>核对提示</th></tr></thead><tbody id="review-items"></tbody></table></div>
       <div class="review-totals" id="review-total"></div>
       <div class="confirmations"><label class="checkline"><input id="ack" type="checkbox">我已核对所有物品、数量和到手单价。</label><label id="risk-label" class="checkline warning" hidden><input id="risk" type="checkbox">我已检查以上缺失、过期或明显偏低的参考价提示，并确认自行定价。</label><p>下一步只会填充 Steam 原生页面。请在该页面再次核对并自行点击“创建上架物品”。</p></div>
       <div class="review-actions"><span id="review-expiry" class="muted"></span><button id="handoff" class="primary" disabled>前往 Steam 核对与提交 →</button></div>
     </section>
     <section id="handoff-panel" class="handoff-panel" hidden aria-label="原生交接状态"><span class="tag">STEAM 原生流程</span><h2 id="handoff-title">正在准备原生页面</h2><p id="handoff-message">正在等待 Steam 加载并核对库存。</p><div><button id="check-native">继续检查交接</button><button id="native-focus" class="primary">查看 Steam 原生页面</button></div><p class="muted">实际上架、手机确认和成交结果以 Steam 页面为准。请勿将“清单已交接”当作“已出售”。</p></section>
-    <footer><span>本地处理 · 没有第三方估价或遥测</span><span>不会自动提交上架 · 不读取手机验证器密钥</span><span>v0.1.1</span></footer>
+    <footer><span>本地处理 · 没有第三方估价或遥测</span><span>不会自动提交上架 · 不读取手机验证器密钥</span><span>v0.1.2</span></footer>
   </main>
   <script type="module" src="ui.js"></script>
 </body>

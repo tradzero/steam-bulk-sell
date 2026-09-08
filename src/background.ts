@@ -56,7 +56,7 @@ chrome.tabs.onRemoved.addListener(tabId => {
 async function execute<T, A extends unknown[]>(tabId: number, func: (...args: A) => T | Promise<T>, args: A, world: 'MAIN' | 'ISOLATED' = 'MAIN'): Promise<T> {
   const results = await chrome.scripting.executeScript({target: {tabId}, world, func, args});
   const result = results.find(r => r.frameId === 0);
-  assert(result && result.result !== undefined, '无法读取 Steam 页面，请切回库存页重新点击扩展授权');
+  assert(result && result.result !== undefined && result.result !== null, '无法读取 Steam 页面，请切回库存页重新点击扩展授权');
   return result.result as T;
 }
 async function source(s: Session, inventoryOnly = true) {
@@ -151,6 +151,8 @@ async function dispatch(s: Session, message: Record<string, unknown>): Promise<u
       if (tab.status !== 'complete') return {state: 'loading', message: '正在打开 Steam 原生页面…'};
       assert(tab.url && new URL(tab.url).href === s.handoff.url, '原标签页地址已变化，已停止交接');
       const result = await execute(s.sourceTabId, fillNative, [s.review]);
+      assert(result && ['loading', 'filled', 'error'].includes(result.state) && typeof result.message === 'string', 'Steam 原生填表没有返回有效状态，请回到库存重新核对');
+      assert(result.state !== 'error', result.message);
       if (result.state === 'filled') { s.handoff.filled = true; await save(s); await chrome.tabs.update(s.sourceTabId, {active: true}); }
       return result;
     }

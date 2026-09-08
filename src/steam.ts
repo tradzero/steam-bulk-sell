@@ -76,11 +76,14 @@ export async function fetchReference(appid: string, currency: number, hashName: 
   return data.lowest_price;
 }
 
-export type NativeResult = {state: 'loading' | 'filled'; message: string};
+export type NativeResult = {state: 'loading' | 'filled' | 'error'; message: string};
 export function fillNative(review: Review): NativeResult {
+  let phase = '检查页面';
+  try {
   const w = window as SteamPage;
   const must = (v: unknown, message: string) => { if (!v) throw new Error(message); };
   must(location.origin === 'https://steamcommunity.com' && /^\/market\/multisell\/?$/.test(location.pathname), '交接目标不是 Steam 原生批量出售页');
+  if (document.readyState === 'loading' || !w.UserYou || !w.g_rgWalletInfo) return {state: 'loading', message: '等待 Steam 原生页面初始化…'};
   must(String(w.g_steamID ?? '') === review.account && String(w.UserYou?.strSteamId ?? '') === review.account, 'Steam 账户已变化，已停止填充');
   must(!w.g_bSellInProgress, 'Steam 已开始处理上架，本插件不会修改正在执行的清单');
   must(Date.now() - review.createdAt <= 120_000, '核对单已过期，请返回工作台重新核对');
@@ -90,6 +93,7 @@ export function fillNative(review: Review): NativeResult {
   must(Array.isArray(names) && Array.isArray(ids) && names.length === review.rows.length && ids.length === names.length, 'Steam 原生表格结构已变化，已停止填充');
   const hashNames = names as string[], nameIds = ids as (number | string)[];
   must(new Set(hashNames).size === hashNames.length && review.rows.every(r => hashNames.includes(r.hashName)), 'Steam 原生物品名称与核对单不一致');
+  phase = '定位原生输入框';
   const controls = review.rows.map(r => {
     const id = String(nameIds[hashNames.indexOf(r.hashName)]);
     must(/^\d+$/.test(id), 'Steam 原生物品编号异常');
@@ -97,15 +101,24 @@ export function fillNative(review: Review): NativeResult {
     must(qty instanceof HTMLInputElement && recv instanceof HTMLInputElement && paid instanceof HTMLInputElement, 'Steam 价格或数量输入框无法识别');
     return {r, qty: qty as HTMLInputElement, recv: recv as HTMLInputElement, paid: paid as HTMLInputElement};
   });
+  const previousPrices = controls.map(c => ({recv: c.recv.value, paid: c.paid.value}));
   // Zero all target rows first. Failed checks must never leave a partly filled sale plan.
   controls.forEach(c => { c.qty.value = '0'; }); zero();
   try {
+    phase = '检查原生库存';
     const inv = w.UserYou?.getInventory?.(review.context.appid, review.context.contextid);
     must(inv && typeof inv.BIsFullyLoaded === 'function', 'Steam 原生库存结构已变化');
     if (!inv.BIsFullyLoaded()) return {state: 'loading', message: '等待 Steam 原生页面完整加载库存…'};
+    // Full inventory data can arrive before Steam's done callback updates the form.
+    for (const c of controls) {
+      const owned = document.getElementById(c.qty.id + '_owned');
+      if (owned && !/^\d+$/.test(owned.textContent?.trim() ?? '')) return {state: 'loading', message: '等待 Steam 更新原生库存数量…'};
+      if (c.qty.disabled || c.recv.disabled || c.paid.disabled) return {state: 'loading', message: '等待 Steam 启用原生输入框…'};
+    }
+    phase = '校验价格与库存';
     const wallet = w.g_rgWalletInfo;
     must(wallet && Number(wallet.wallet_currency) === review.wallet.currency, '钱包货币已变化');
-    for (const fn of ['GetTotalWithFees', 'GetPriceValueAsInt', 'GetCurrencyCode', 'v_currencyformat', 'PriceRecvChanged', 'UpdateOrderTotal', '$J']) must(typeof w[fn] === 'function', 'Steam 费用或表单函数已变化');
+    for (const fn of ['GetTotalWithFees', 'GetPriceValueAsInt', 'GetCurrencyCode', 'v_currencyformat', 'UpdateOrderTotal']) must(typeof w[fn] === 'function', `Steam 原生函数 ${fn} 尚未就绪或已变化`);
     must(String(w.GetCurrencyCode(wallet.wallet_currency)) === review.wallet.code, '钱包货币代码不匹配');
     const totals = new Map<string, number>();
     for (const asset of Object.values(inv.m_rgAssets ?? {}) as Record<string, any>[]) {
@@ -123,12 +136,14 @@ export function fillNative(review: Review): NativeResult {
       const nativePaid = w.GetTotalWithFees(c.r.receive, Number(wallet.wallet_publisher_fee_percent_default ?? 0.10), Number(wallet.wallet_fee_percent ?? 0.05), wallet);
       must(nativePaid === c.r.paid, 'Steam 原生费用与核对单不同，已停止交接，请在 Steam 手动核对');
     }
+    phase = '填写原生价格';
     for (const c of controls) {
       c.recv.value = String(w.v_currencyformat(c.r.receive, review.wallet.code));
-      w.PriceRecvChanged(w.$J(c.recv));
+      c.paid.value = String(w.v_currencyformat(c.r.paid, review.wallet.code));
       must(w.GetPriceValueAsInt(c.recv.value) === c.r.receive && w.GetPriceValueAsInt(c.paid.value) === c.r.paid, 'Steam 价格取整发生变化，已停止交接');
     }
     controls.forEach(c => { c.qty.value = String(c.r.quantity); });
+    phase = '核对原生合计';
     must(w.UpdateOrderTotal() === true, 'Steam 原生表单未通过校验');
     let banner = document.getElementById('steam-bulk-local-handoff');
     if (!banner) { banner = document.createElement('div'); banner.id = 'steam-bulk-local-handoff'; (document.querySelector('main') ?? document.body).prepend(banner); }
@@ -138,7 +153,11 @@ export function fillNative(review: Review): NativeResult {
     return {state: 'filled', message: '已填入 Steam 原生页面，尚未提交。'};
   } catch (error) {
     controls.forEach(c => { c.qty.value = '0'; }); zero();
-    if (typeof w.UpdateOrderTotal === 'function') w.UpdateOrderTotal();
+    controls.forEach((c, i) => { c.recv.value = previousPrices[i]!.recv; c.paid.value = previousPrices[i]!.paid; });
+    try { if (typeof w.UpdateOrderTotal === 'function') w.UpdateOrderTotal(); } catch { /* Keep the original error. */ }
     throw error;
+  }
+  } catch (error) {
+    return {state: 'error', message: `原生交接失败（${phase}）：${error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message.slice(0, 300) : 'Steam 页面执行异常'}。请返回库存重新核对。`};
   }
 }
