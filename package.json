@@ -1,0 +1,16 @@
+{
+  "name": "steam-bulk-sell-local",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node scripts/build.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "package": "npm test && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.0.287",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,14 @@
+import {resolve} from 'node:path';
+import {readFile, writeFile, readdir, rm} from 'node:fs/promises';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+const root = resolve(import.meta.dirname, '..'), outputs = resolve(root, '..');
+const release = resolve(outputs, 'steam-bulk-sell-v0.1.0.zip');
+const source = resolve(outputs, 'steam-bulk-sell-source-v0.1.0.zip');
+await rm(release, {force: true}); await rm(source, {force: true});
+execFileSync('zip', ['-q', '-X', release, ...(await readdir(resolve(root, 'dist'))).sort()], {cwd: resolve(root, 'dist')});
+execFileSync('zip', ['-q', '-X', '-r', source, 'src', 'static', 'scripts', 'tests', 'package.json', 'package-lock.json', 'tsconfig.json', 'README.md', 'SECURITY.md', 'VALIDATION.md', '.gitignore'], {cwd: root});
+const sums = [];
+for (const path of [release, source]) sums.push(`${createHash('sha256').update(await readFile(path)).digest('hex')}  ${path.split('/').pop()}`);
+await writeFile(resolve(outputs, 'steam-bulk-sell-SHA256SUMS.txt'), sums.join('\n') + '\n');
+console.log(release + '\n' + source);
