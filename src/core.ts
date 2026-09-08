@@ -57,6 +57,15 @@ export function moneyInput(value: string): number {
   const [whole = '', fraction = ''] = s.replace(',', '.').split('.');
   return integer(Number(whole) * 100 + Number(fraction.padEnd(2, '0')), 1, 1_000_000_000, '价格');
 }
+export type PriceMode = 'receive' | 'paid';
+export function enteredPrice(value: string, mode: PriceMode, w: Wallet): {receive: number; paid: number; fee: number; target: number} {
+  const target = moneyInput(value);
+  assert(normalizedPrice(target, w) === target, '价格不符合最小金额或货币步长');
+  if (mode === 'paid') assert(target >= buyerPays(w.minimum, w), '买方支付价低于含手续费的最小金额');
+  const receive = mode === 'paid' ? sellerReceives(target, w) : target;
+  const paid = buyerPays(receive, w);
+  return {receive, paid, fee: paid - receive, target};
+}
 // One price only. Never concatenate the buyer/seller numbers from Market Beta DOM text.
 export function parseReference(raw: string, w: Wallet): number {
   assert(typeof raw === 'string' && raw.length < 100, 'Steam 未返回有效参考价');

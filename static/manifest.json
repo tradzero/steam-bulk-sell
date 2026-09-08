@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Steam 批量出售 · 本地版",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "在本地筛选同质库存、核对价格，再交给 Steam 原生页面手动提交。",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage"],

@@ -1,5 +1,5 @@
 import type { PublicSession, Group, Review, Selection, Reference, Reply, Wallet } from './types.js';
-import { assert, integer, moneyInput, buyerPays, sellerReceives, normalizedPrice, referenceKey, PRICE_TTL, REVIEW_TTL } from './core.js';
+import { assert, integer, buyerPays, sellerReceives, enteredPrice, referenceKey, PRICE_TTL, REVIEW_TTL } from './core.js';
 
 const get = <T extends HTMLElement = HTMLElement>(id: string) => {
   const node = document.getElementById(id); if (!node) throw new Error(`缺少界面元素 ${id}`); return node as T;
@@ -25,6 +25,9 @@ async function request<T>(type: string, data: Record<string, unknown> = {}): Pro
   if (!reply?.ok) throw new Error(reply?.error ?? '扩展后台没有响应，请重新打开工作台');
   return reply.data as T;
 }
+type PriceMode = 'receive' | 'paid';
+let priceMode: PriceMode = 'receive';
+const priceText = (receive: number) => ((priceMode === 'paid' ? buyerPays(receive, wallet()) : receive) / 100).toFixed(2);
 type RowState = {selected: boolean; quantity: string; price: string};
 let state: PublicSession;
 let rows = new Map<string, RowState>();
@@ -55,7 +58,7 @@ function applyState(next: PublicSession, restoreRows = false) {
   state = next;
   if (restoreRows) {
     rows = new Map((state.inventory?.groups ?? []).map(g => [g.hashName, {selected: false, quantity: '1', price: ''}]));
-    for (const r of state.draft) if (rows.has(r.hashName)) rows.set(r.hashName, {selected: true, quantity: String(r.quantity), price: r.receive > 0 ? (r.receive / 100).toFixed(2) : ''});
+    for (const r of state.draft) if (rows.has(r.hashName)) rows.set(r.hashName, {selected: true, quantity: String(r.quantity), price: r.receive > 0 ? priceText(r.receive) : ''});
   }
 }
 function switchStage(next: typeof stage) {
@@ -92,25 +95,24 @@ function selection(allowEmptyPrice = false): Selection[] {
     const row = rows.get(hashName)!, group = state.inventory!.groups.find(g => g.hashName === hashName)!;
     const quantity = integer(Number(row.quantity), 1, group.owned, `${group.name}的出售数量`);
     let receive = 0;
-    if (row.price.trim()) receive = moneyInput(row.price);
-    else assert(allowEmptyPrice, `${group.name}尚未填写到手单价`);
-    if (receive) assert(normalizedPrice(receive, wallet()) === receive, `${group.name}的价格不符合最小金额或货币步长`);
+    if (row.price.trim()) receive = enteredPrice(row.price, priceMode, wallet()).receive;
+    else assert(allowEmptyPrice, `${group.name}尚未填写单价`);
     return {hashName, quantity, receive};
   });
 }
 function renderSummary() {
-  const names = selectedNames(); let total = 0, count = 0, invalid = 0;
+  const names = selectedNames(); let total = 0, fees = 0, count = 0, invalid = 0;
   for (const name of names) {
     const row = rows.get(name)!;
     try { const group = state.inventory!.groups.find(g => g.hashName === name)!; const q = integer(Number(row.quantity), 1, group.owned, '数量'); count += q;
-      const p = moneyInput(row.price); assert(normalizedPrice(p, wallet()) === p, '步长'); total += p * q;
+      const p = enteredPrice(row.price, priceMode, wallet()); total += p.receive * q; fees += p.fee * q;
     } catch { invalid++; }
   }
   text('selection-summary', `已选 ${names.length} 种 · ${count} 件${invalid ? ` · ${invalid} 行待填写或修正` : ''}`);
   text('total', names.length ? `${money(total)}${invalid ? '（部分）' : ''}` : '—');
   button('review').disabled = busy || !names.length || invalid > 0 || names.length > 25 || count > 200;
   if (names.length > 25 || count > 200) text('total-caption', '本批超出 25 种 / 200 件，请减少选择或数量。');
-  else text('total-caption', '全部成交后的预计到手金额');
+  else text('total-caption', `全部成交后的预计到手金额 · 手续费${invalid ? '部分' : '合计'} ${money(fees)}`);
   const filteredNames = new Set(filtered().map(g => g.hashName)); const hidden = names.filter(n => !filteredNames.has(n)).length;
   text('hidden-selection', hidden ? `筛选外仍有 ${hidden} 种已选，核对单会包含它们` : '');
 }
@@ -130,16 +132,19 @@ function renderTable() {
     refCell.append(node('div', ref ? money(ref.paid) : '未获取', 'numeric'));
     if (ref) { const age = Math.max(0, Date.now() - ref.fetchedAt); refCell.append(node('div', age > PRICE_TTL ? '已过期' : `${Math.floor(age / 60_000)} 分钟前`, `reference-time${age > PRICE_TTL ? ' stale' : ''}`)); }
     tr.append(refCell);
-    const recvCell = node('td'), price = node('input'); price.type = 'text'; price.inputMode = 'decimal'; price.value = r.price; price.placeholder = '输入到手价'; price.className = 'price'; price.disabled = busy || !r.selected; price.setAttribute('aria-label', `${g.name}每件到手价`); recvCell.append(price); tr.append(recvCell);
-    const paidCell = node('td', '—', 'numeric'), subtotal = node('td', '—', 'numeric'); tr.append(paidCell, subtotal);
+    const recvCell = node('td'), price = node('input'); price.type = 'text'; price.inputMode = 'decimal'; price.value = r.price; price.placeholder = priceMode === 'receive' ? '输入到手价' : '输入买方价'; price.className = 'price'; price.disabled = busy || !r.selected; price.setAttribute('aria-label', `${g.name}每件${priceMode === 'receive' ? '到手价' : '买方支付价'}`); const rounding = node('div', '', 'reference-time warning'); rounding.hidden = true; recvCell.append(price, rounding); tr.append(recvCell);
+    const paidCell = node('td', '—', 'numeric'), feeCell = node('td', '—', 'numeric'), subtotal = node('td', '—', 'numeric'); tr.append(paidCell, feeCell, subtotal);
     function update() {
       r.quantity = qty.value; r.price = price.value;
       qty.removeAttribute('aria-invalid'); price.removeAttribute('aria-invalid');
       let q = 0, p = 0;
       try { q = integer(Number(r.quantity), 1, g.owned, '数量'); } catch { if (r.selected) qty.setAttribute('aria-invalid', 'true'); }
-      try { p = moneyInput(r.price); assert(normalizedPrice(p, wallet()) === p, '步长'); }
+      rounding.hidden = true;
+      try { const amounts = enteredPrice(r.price, priceMode, wallet()); p = amounts.receive;
+        if (priceMode === 'paid' && amounts.paid !== amounts.target) { rounding.textContent = `取整后买方支付 ${money(amounts.paid)}`; rounding.hidden = false; }
+      }
       catch { if (r.price && r.selected) price.setAttribute('aria-invalid', 'true'); p = 0; }
-      paidCell.textContent = p ? money(buyerPays(p, wallet())) : '—'; subtotal.textContent = r.selected && p && q ? money(p * q) : '—'; renderSummary();
+      paidCell.textContent = p ? money(priceMode === 'receive' ? buyerPays(p, wallet()) : p) : '—'; feeCell.textContent = p ? money(buyerPays(p, wallet()) - p) : '—'; subtotal.textContent = r.selected && p && q ? money(p * q) : '—'; renderSummary();
     }
     qty.addEventListener('input', update); price.addEventListener('input', update); update(); body.append(tr);
   }
@@ -169,8 +174,8 @@ function renderReview(r: Review) {
   text('review-context', `${r.context.name} · 账户 …${r.account.slice(-6)} · ${r.wallet.code}`);
   const body = get('review-items'); body.replaceChildren();
   for (const row of r.rows) { const tr = node('tr');
-    [row.name, String(row.quantity), money(row.receive), money(row.paid), money(row.receive * row.quantity), row.warning || '参考价有效'].forEach((value, i) => tr.append(node('td', value, i === 5 && row.warning ? 'warning' : undefined))); body.append(tr); }
-  text('review-total', `${r.rows.length} 种 / ${r.totalQuantity} 件 · 预计到手 ${money(r.totalReceive)} · 买方合计支付 ${money(r.totalPaid)}`);
+    [row.name, String(row.quantity), money(row.receive), money(row.paid), money(row.paid - row.receive), money(row.receive * row.quantity), row.warning || '参考价有效'].forEach((value, i) => tr.append(node('td', value, i === 6 && row.warning ? 'warning' : undefined))); body.append(tr); }
+  text('review-total', `${r.rows.length} 种 / ${r.totalQuantity} 件 · 预计到手 ${money(r.totalReceive)} · 手续费合计 ${money(r.totalPaid - r.totalReceive)} · 买方合计支付 ${money(r.totalPaid)}`);
   show('risk-label', r.rows.some(row => row.warning)); syncReview(); status('请核对全部清单。当前没有创建任何上架。');
 }
 function syncReview() {
@@ -237,6 +242,24 @@ button('get-prices').addEventListener('click', () => void task(async () => {
   }
   text('price-progress', `已获取 ${done} 种参考价`); status('参考价已获取，尚未更改你的单价。可选择定价策略后应用。');
 }));
+select('price-mode').addEventListener('change', () => {
+  const next = select('price-mode').value as PriceMode;
+  show('error', false);
+  try {
+    // Convert every row, including filtered-out and unselected prices, atomically.
+    const converted = [...rows].map(([name, row]) => {
+      if (!row.price.trim()) return [name, ''] as const;
+      const amounts = enteredPrice(row.price, priceMode, wallet());
+      return [name, ((next === 'receive' ? amounts.receive : amounts.paid) / 100).toFixed(2)] as const;
+    });
+    priceMode = next;
+    converted.forEach(([name, value]) => { rows.get(name)!.price = value; });
+    text('price-heading', next === 'receive' ? '到手价 / 件（输入）' : '买方支付 / 件（输入）');
+    text('converted-heading', next === 'receive' ? '买方支付 / 件' : '您将收到 / 件');
+    text('price-mode-hint', next === 'receive' ? '输入每件到手价，自动计算买方支付和手续费。' : '输入含手续费的买方价，自动计算到手价。费用取整有差异时，会在输入框下显示实际买方价。');
+    renderTable(); status('已切换价格输入口径，已有价格按实际到手金额换算。');
+  } catch (e) { select('price-mode').value = priceMode; error(new Error(`请先修正已填写的无效价格，再切换口径。${e instanceof Error ? e.message : ''}`)); }
+});
 select('strategy').addEventListener('change', () => show('offset-label', select('strategy').value === 'percent'));
 button('apply-prices').addEventListener('click', () => {
   show('error', false);
@@ -249,7 +272,7 @@ button('apply-prices').addEventListener('click', () => {
       assert(paid >= buyerPays(wallet().minimum, wallet()), '调整后的价格低于 Steam 最小金额');
       return [name, sellerReceives(paid, wallet())];
     });
-    updates.forEach(([name, value]) => { rows.get(name)!.price = (value / 100).toFixed(2); }); renderTable(); status('已应用到手价。受费用取整影响，买方支付可能与目标参考价略有差异，请逐行核对。');
+    updates.forEach(([name, value]) => { rows.get(name)!.price = priceText(value); }); renderTable(); status('已按当前输入口径应用定价。受费用取整影响，买方支付可能与目标参考价略有差异，请逐行核对。');
   } catch (e) { error(e); }
 });
 button('save').addEventListener('click', () => void task(async () => { await request('draft', {rows: selection(true)}); status('草稿已保存在本次浏览器会话中；关闭浏览器或两小时未使用后失效。'); }));
