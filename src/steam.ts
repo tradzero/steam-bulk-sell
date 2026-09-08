@@ -121,7 +121,14 @@ export function fillNative(review: Review): NativeResult {
     for (const fn of ['GetTotalWithFees', 'GetPriceValueAsInt', 'GetCurrencyCode', 'v_currencyformat', 'UpdateOrderTotal']) must(typeof w[fn] === 'function', `Steam 原生函数 ${fn} 尚未就绪或已变化`);
     must(String(w.GetCurrencyCode(wallet.wallet_currency)) === review.wallet.code, '钱包货币代码不匹配');
     const totals = new Map<string, number>();
-    for (const asset of Object.values(inv.m_rgAssets ?? {}) as Record<string, any>[]) {
+    // Steam's Prototype replaces Object.values and includes inherited Array methods.
+    // Its inventory is an associative Array: enumerate only own asset entries.
+    const assets = inv.m_rgAssets;
+    must(assets && typeof assets === 'object', 'Steam 原生库存资产结构缺失');
+    for (const assetid in assets) {
+      if (!Object.prototype.hasOwnProperty.call(assets, assetid)) continue;
+      const asset = assets[assetid];
+      must(asset && typeof asset === 'object', 'Steam 原生库存资产格式异常');
       const key = String(asset.classid) + (asset.instanceid && String(asset.instanceid) !== '0' ? `_${asset.instanceid}` : '');
       const d = inv.m_rgDescriptions?.[key] ?? asset.description;
       must(d, 'Steam 原生库存描述缺失');

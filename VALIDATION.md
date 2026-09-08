@@ -58,3 +58,11 @@
 - 等待原生页面初始化、库存完整和输入框就绪。通过 Steam GetTotalWithFees 校验后直接填入两侧金额，再由 UpdateOrderTotal 校验合计；不再调用会读取无关行资产描述的 PriceRecvChanged。
 - 39 项测试通过，包括初始化等待、格式化失败、缺失行资产联动函数、空/错误结果和清理过程异常。演示核对 20 件、到手 52.19、买方 60.00 的合计与用户截图一致。
 - 用户报错的原标签页已不在当前标签列表，无法恢复当时被覆盖的首个异常。已只读查看重新打开的真实原生表单结构与脚本，未提交上架。浏览器策略禁止访问 chrome://extensions/，因此未能自动加载修复版做真实扩展填表验证；不能据此认定原始填表问题已在真实环境复测通过。
+
+## v0.1.3 原生库存描述缺失的确定性复现与修复
+
+- Steam economy_v2.js 将 m_rgAssets 初始化为数组并按 assetid 写入；其 Prototype 1.7 覆盖 Object.values，使用未检查自有属性的 for-in 遍历，会把数组继承方法作为返回值。
+- 使用从 Steam 官方 CDN 下载的完整 Prototype 脚本在 jsdom 中复现：2 个自有资产得到 37 个 Object.values 返回项，v0.1.2 精确报出“原生交接失败（校验价格与库存）：Steam 原生库存描述缺失”。
+- 改为 for-in 配合 Object.prototype.hasOwnProperty.call，仅遍历自有资产。相同完整 Prototype 环境下新版返回 filled，数量为 3 / 2、首行买方价 11.44，出售调用次数为 0。
+- 新增 Prototype 枚举回归和真实资产缺失描述仍拒绝交接的测试；共 41 项通过。未自动加载用户安装的扩展或执行真实上架。
+- 公开源： https://community.fastly.steamstatic.com/public/javascript/prototype-1.7.js?v=npJElBnrEO6W&l=schinese&_cdn=fastly 。下载文件只在 work 中用于复现，不打包入扩展。

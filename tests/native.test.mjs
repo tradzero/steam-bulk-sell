@@ -82,3 +82,16 @@ test('cleanup preserves the original error even if native totals also throw',()=
  const f=fixture();f.w.GetTotalWithFees=()=>{throw new Error('original failure');};f.w.UpdateOrderTotal=()=>{throw new Error('cleanup failure');};
  const result=f.call();assert.equal(result.state,'error');assert.match(result.message,/original failure/);assert.deepEqual(f.quantities(),['0','0']);f.close();
 });
+
+test('Prototype Object.values and inherited Array methods are not inventory assets',()=>{
+ const f=fixture();
+ // Reproduce Steam's associative Array and Prototype 1.7's inherited enumeration.
+ f.w.eval(`Object.values = function(object) { var results = []; for(var property in object) results.push(object[property]); return results; }; Array.prototype.steamEnumerableMethod = function() {};`);
+ const assets=new f.w.Array();Object.assign(assets,f.inv.m_rgAssets);f.inv.m_rgAssets=assets;
+ assert.equal(f.w.Object.values(assets).length,3);
+ assert.equal(f.call().state,'filled');assert.deepEqual(f.quantities(),['3','2']);assert.equal(f.submissions(),0);f.close();
+});
+test('an actual asset with missing description still blocks native handoff',()=>{
+ const f=fixture();delete f.inv.m_rgDescriptions[11];const result=f.call();
+ assert.equal(result.state,'error');assert.match(result.message,/库存描述缺失/);assert.deepEqual(f.quantities(),['0','0']);assert.equal(f.submissions(),0);f.close();
+});
